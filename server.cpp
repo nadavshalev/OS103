@@ -34,20 +34,12 @@ void error(char *msg) {
 	exit(1);
 }
 
-string tftp_prtotocol(char* dataIn){
-	if(state){ //conn is active
 
-	}
-	else{
-		struct st_wrq wrqObj = (struct st_wrq)dataIn;
-		string data = string(wrqObj.data);
-		size_t found = data.find('0');
-		if (found == string::npos)
-			error("illegal filename");
-		sting filename = data.substr(0,found-1);
-		string restData = data.substr(found+1, string::npos);
-	}
+struct st_ack proccess_wrq(struct st_wrq &wrq){
 }
+struct st_ack proccess_data(struct st_data &data){
+}
+
 
 int main(int argc, char *argv[]) {
 	if(argc != 2)
@@ -61,7 +53,16 @@ int main(int argc, char *argv[]) {
 	unsigned int clientAddrLen; /* Length of incoming message */
 	char echoBuffer[PACK_SIZE]; /* Buffer for echo string */
 	int recvMsgSize; /* Size of received message */
-	
+	fd_set fdSet;
+    FD_ZERO(&fdSet);
+    FD_SET(sock_fd, &fdSet);
+    struct timeval timeInt;
+    timeInt.tv_sec = TIMEOUT;
+    timeInt.tv_usec = 0;
+    struct st_ack wrq;
+    struct st_data data;
+    struct st_ack ack;
+
 	/* Create socket for sending/receiving datagrams */
 	if ((sock_fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
 		error("socket creation failed");
@@ -81,13 +82,19 @@ int main(int argc, char *argv[]) {
 		clientAddrLen = sizeof(clientSocketAddr);
 
 		/* Block until receive message from a client */
-		recvMsgSize = recvfrom(sock_fd, echoBuffer, PACK_SIZE, 0, (struct sockaddr *) &clientSocketAddr, &clientAddrLen);
+		recvMsgSize = recvfrom(sock_fd, &wrq, PACK_SIZE, 0, (struct sockaddr *) &clientSocketAddr, &clientAddrLen);
 		if (recvMsgSize < 0)
 			error("socket recvfrom failed");
 		printf("Handling client %s\n", inet_ntoa(clientSocketAddr.sin_addr));
 
+        ack = proccess_wrq(wrq);
+
+        if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*)clientSocketAddr,  sizeof(*clientSocketAddr))  != sizeof(clientSocketAddr))
+            error("faild to send response");
 
 		int timeoutExpiredCount = 0;
+		int packetReady = 0;
+		string sendData;
 		do
 		{
 			do
@@ -96,38 +103,38 @@ int main(int argc, char *argv[]) {
 				{
 					// TODO: Wait WAIT_FOR_PACKET_TIMEOUT to see if something appears                  
 					//       for us at the socket (we are waiting for DATA)
+					packetReady = select(sock_fd+1, &fdSet, NULL, NULL, timeInt);
 
-					if ()// TODO: if there was something at the socket and                       
-						 //       we are here not because of a timeout   
-						recvMsgSize = recvfrom(sock_fd, echoBuffer, PACK_SIZE, 0, (struct sockaddr *) &clientSocketAddr, &clientAddrLen);
+					if (packetReady > 0)// TODO: if there was something at the socket and we are here not because of a timeout
 					              
-					{                 	   
-						// TODO: Read the DATA packet from the socket (at                      
-						//       least we hope this is a DATA packet)                
+					{
+						// TODO: Read the DATA packet from the socket (at least we hope this is a DATA packet)
+						recvMsgSize = recvfrom(sock_fd, &data, PACK_SIZE, 0, (struct sockaddr *) &clientSocketAddr, &clientAddrLen);
 					}
-					if   (...) // TODO: Time out expired while waiting for data    
-							   //       to appear at the socket  
+					if   (packetReady == 0) // TODO: Time out expired while waiting for data to appear at the socket
 				   	{  
 				   		//TODO: Send another ACK for the last packet   
 				   		timeoutExpiredCount++;  
 				   	}
+				   	if   (packetReady < 0)
+				   	{
+				   	    error("Error while waiting for packet");
+				   	}
 				   	if   (timeoutExpiredCount>= MAX_FAIL)  
 				   	{                 
-				   		// FATAL ERROR BAIL OUT 
+				   		error("Timeout while waiting for packet");
 				   	} 
 				} while(recvMsgSize < 0) // TODO: Continue while some socket was ready  
 						     //       but recvfrom somehow failed to read the data
 			} while(false);
-			timeoutExpiredCount = 0;         
-			lastWriteSize = fwrite(...); 
-			// write next bulk of data 
+			timeoutExpiredCount = 0;
+
+			ack = proccess_data(data);
+            if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*)clientSocketAddr,  sizeof(*clientSocketAddr))  != sizeof(clientSocketAddr))
+                error("faild to send response");
+
 			// TODO: send ACK packet to the client
-		} while(...); // Have blocks left to be read from client (not end of transmission)
-
-
-		/* Send received datagram back to the client */
-		if (sendto(sock_fd, echoBuffer, recvMsgSize, 0, (struct sockaddr *) &clientSocketAddr, sizeof(clientSocketAddr)) != recvMsgSize)
-			error("sendto() sent a different number of bytes than expected");
+		} while(recvMsgSize == PACK_SIZE); // Have blocks left to be read from client (not end of transmission)
 	}
 	/* NOT REACHED */
 }	
