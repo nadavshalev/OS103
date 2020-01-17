@@ -8,9 +8,14 @@
 #define Data_SIZE = 512
 #define TIMEOUT = 3
 #define MAX_FAIL = 7
+
 using namespace std;
 
 bool state;
+
+uint16_t WRQ_OP = 2
+uint16_t DATA_OP = 3
+uint16_t ACK_OP = 4
 
 struct st_ack
 {
@@ -20,7 +25,7 @@ struct st_ack
 struct st_wrq
 {
 	uing16_t op;
-	string data[Data_SIZE+2];
+	char* data;
 } __attribute__((packed));
 struct st_data
 {
@@ -35,9 +40,36 @@ void error(char *msg) {
 }
 
 
-struct st_ack proccess_wrq(struct st_wrq &wrq){
+struct st_ack proccess_wrq(struct st_wrq &wrq, int* fd){
+	if(ntohs(wrq.op) != WRQ_OP)
+		error('Error: Wrong opcode for wrq packet');
+	// TODO: split filename and mode!
+	char* ptr = wrq.data;
+	char* filename, mode;
+	strncpy(filename, ptr, 255); 
+	ptr += strlen(ptr)+1;
+	strncpy(mode, ptr, 255); 
+	fd = fopen(filename,"w");
+
+	printf("IN:WRQ,%s,%s", filename, mode);
+	
+	struct st_ack ack;
+	memset(&ack, 0, sizeof(ack));
+	ack.op = htons(ACK_OP);
+	ack.num = htons(0);
+	return ack;
 }
-struct st_ack proccess_data(struct st_data &data){
+struct st_ack proccess_data(struct st_data &data, int datalen, int* fd){
+	if(ntohs(data.op) != DATA_OP)
+		error('Error: Wrong opcode for data packet');
+	fwrite(data.data, sizeof(char), datalen, fd);
+	uing16_t num = nthhs(data.num);
+
+	struct st_ack ack;
+	memset(&ack, 0, sizeof(ack));
+	ack.op = htons(ACK_OP);
+	ack.num = htons(num);
+	return ack;
 }
 
 
@@ -46,7 +78,7 @@ int main(int argc, char *argv[]) {
 		error("wrong number of parameters");
 	unsigned short echoServPort = atoi(argv[1]);
 
-	int sock_fd;
+	int sock_fd, data_fd;
 	/* Socket */
 	struct sockaddr_in serverSocketAddr; /* Local address */
 	struct sockaddr_in clientSocketAddr; /* Client address */
@@ -87,7 +119,7 @@ int main(int argc, char *argv[]) {
 			error("socket recvfrom failed");
 		printf("Handling client %s\n", inet_ntoa(clientSocketAddr.sin_addr));
 
-        ack = proccess_wrq(wrq);
+        ack = proccess_wrq(wrq, &data_fd);
 
         if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*)clientSocketAddr,  sizeof(*clientSocketAddr))  != sizeof(clientSocketAddr))
             error("faild to send response");
@@ -133,8 +165,9 @@ int main(int argc, char *argv[]) {
             if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*)clientSocketAddr,  sizeof(*clientSocketAddr))  != sizeof(clientSocketAddr))
                 error("faild to send response");
 
+
 			// TODO: send ACK packet to the client
-		} while(recvMsgSize == PACK_SIZE); // Have blocks left to be read from client (not end of transmission)
+		} while(recvMsgSize >= PACK_SIZE); // Have blocks left to be read from client (not end of transmission)
 	}
 	/* NOT REACHED */
 }	
