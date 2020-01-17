@@ -49,9 +49,9 @@ struct st_ack proccess_wrq(struct st_wrq* wrq, FILE** fd){
 		error("Error: Wrong opcode for wrq packet");
 	// TODO: split filename and mode!
 	char* ptr = wrq->data;
-	char* filename;
-	char* mode;
-	strncpy(filename, ptr, 255); 
+	char filename[255];
+	char mode[255];
+	strncpy(filename, ptr, 255);
 	ptr += strlen(ptr)+1;
 	strncpy(mode, ptr, 255); 
 	*fd = fopen(filename,"w");
@@ -97,12 +97,10 @@ int main(int argc, char *argv[]) {
 	unsigned int clientAddrLen; /* Length of incoming message */
 	char echoBuffer[PACK_SIZE]; /* Buffer for echo string */
 	int recvMsgSize; /* Size of received message */
+
 	fd_set fdSet;
     FD_ZERO(&fdSet);
-    FD_SET(sock_fd, &fdSet);
     struct timeval timeInt;
-    timeInt.tv_sec = TIMEOUT;
-    timeInt.tv_usec = 0;
 
     struct st_wrq wrq;
     struct st_data data;
@@ -114,6 +112,7 @@ int main(int argc, char *argv[]) {
 	/* Create socket for sending/receiving datagrams */
 	if ((sock_fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
 		error("socket creation failed");
+    FD_SET(sock_fd, &fdSet);
 
 	/* Construct local address structure */
 	memset(&serverSocketAddr, 0, sizeof(serverSocketAddr)); /* Zero out structure */
@@ -133,10 +132,9 @@ int main(int argc, char *argv[]) {
 		recvMsgSize = recvfrom(sock_fd, &wrq, PACK_SIZE, 0, (struct sockaddr *) &clientSocketAddr, &clientAddrLen);
 		if (recvMsgSize < 0)
 			error("socket recvfrom failed");
-
         ack = proccess_wrq(&wrq, &data_fd);
 
-        if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*) &clientSocketAddr,  clientAddrLen)  != sizeof(clientSocketAddr))
+        if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*) &clientSocketAddr,  clientAddrLen)  != sizeof(ack))
             error("faild to send response");
         printf("OUT:ACK, %d\n", ack.num);
 
@@ -146,14 +144,15 @@ int main(int argc, char *argv[]) {
 		{
 			do
 			{
+				recvMsgSize = -1;
 				do
 				{
 					// TODO: Wait WAIT_FOR_PACKET_TIMEOUT to see if something appears                  
 					//       for us at the socket (we are waiting for DATA)
+					timeInt.tv_sec = TIMEOUT;
+					timeInt.tv_usec = 0;
 					packetReady = select(sock_fd+1, &fdSet, NULL, NULL, &timeInt);
-
 					if (packetReady > 0)// TODO: if there was something at the socket and we are here not because of a timeout
-					              
 					{
 						// TODO: Read the DATA packet from the socket (at least we hope this is a DATA packet)
 						recvMsgSize = recvfrom(sock_fd, &data, PACK_SIZE, 0, (struct sockaddr *) &clientSocketAddr, &clientAddrLen);
@@ -165,7 +164,7 @@ int main(int argc, char *argv[]) {
 					if   (packetReady == 0) // TODO: Time out expired while waiting for data to appear at the socket
 				   	{  
 				   		//TODO: Send another ACK for the last packet  
-				   		if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*) &clientSocketAddr,  clientAddrLen)  != sizeof(clientSocketAddr))
+				   		if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*) &clientSocketAddr,  clientAddrLen)  != sizeof(ack))
 				            error("faild to send response");
 				        printf("OUT:ACK, %d\n", ack.num); 
 				   		timeoutExpiredCount++;  
@@ -178,13 +177,13 @@ int main(int argc, char *argv[]) {
 				   	{                 
 				   		error("Timeout while waiting for packet");
 				   	} 
-				} while(recvMsgSize < 0); // TODO: Continue while some socket was ready  
+				} while(recvMsgSize <= 0); // TODO: Continue while some socket was ready  
 						     //       but recvfrom somehow failed to read the data
 			} while(false);
 			timeoutExpiredCount = 0;
 
 			// TODO: send ACK packet to the client
-	        if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*) &clientSocketAddr,  clientAddrLen)  != sizeof(clientSocketAddr))
+	        if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*) &clientSocketAddr,  clientAddrLen)  != sizeof(ack))
 	            error("faild to send response");
 	        printf("OUT:ACK, %d\n", ack.num);
 
