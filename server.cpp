@@ -1,57 +1,62 @@
 #include <stdio.h>
+#include <unistd.h>
 #include <stdlib.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/select.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 
-#define PACK_SIZE = 516
-#define Data_SIZE = 512
-#define TIMEOUT = 3
-#define MAX_FAIL = 7
+#define PACK_SIZE 516
+#define Data_SIZE 512
+#define TIMEOUT 3
+#define MAX_FAIL 7
 
 using namespace std;
 
 bool state;
 
-uint16_t WRQ_OP = 2
-uint16_t DATA_OP = 3
-uint16_t ACK_OP = 4
+uint16_t WRQ_OP = 2;
+uint16_t DATA_OP = 3;
+uint16_t ACK_OP = 4;
 
 struct st_ack
 {
-	uing16_t op;
-	uing16_t num;
+	uint16_t op;
+	uint16_t num;
 } __attribute__((packed));
 struct st_wrq
 {
-	uing16_t op;
-	char* data;
+	uint16_t op;
+	char data[Data_SIZE+2];
 } __attribute__((packed));
 struct st_data
 {
-	uing16_t op;
-	uing16_t num;
+	uint16_t op;
+	uint16_t num;
 	char data[Data_SIZE];
 } __attribute__((packed));
 
-void error(char *msg) {
+
+void error(const char *msg) {
 	perror(msg);
 	exit(1);
 }
 
-
-struct st_ack proccess_wrq(struct st_wrq &wrq, int* fd){
-	if(ntohs(wrq.op) != WRQ_OP)
-		error('Error: Wrong opcode for wrq packet');
+struct st_ack proccess_wrq(struct st_wrq* wrq, FILE** fd){
+	if(ntohs(wrq->op) != WRQ_OP)
+		error("Error: Wrong opcode for wrq packet");
 	// TODO: split filename and mode!
-	char* ptr = wrq.data;
-	char* filename, mode;
+	char* ptr = wrq->data;
+	char* filename;
+	char* mode;
 	strncpy(filename, ptr, 255); 
 	ptr += strlen(ptr)+1;
 	strncpy(mode, ptr, 255); 
-	fd = fopen(filename,"w");
+	*fd = fopen(filename,"w");
 
-	printf("IN:WRQ,%s,%s", filename, mode);
+	printf("IN:WRQ,%s,%s\n", filename, mode);
 	
 	struct st_ack ack;
 	memset(&ack, 0, sizeof(ack));
@@ -59,11 +64,18 @@ struct st_ack proccess_wrq(struct st_wrq &wrq, int* fd){
 	ack.num = htons(0);
 	return ack;
 }
-struct st_ack proccess_data(struct st_data &data, int datalen, int* fd){
-	if(ntohs(data.op) != DATA_OP)
-		error('Error: Wrong opcode for data packet');
-	fwrite(data.data, sizeof(char), datalen, fd);
-	uing16_t num = nthhs(data.num);
+struct st_ack proccess_data(struct st_data* data, int datalen, FILE** fd){
+	if(ntohs(data->op) != DATA_OP)
+		error("Error: Wrong opcode for data packet");
+
+	fwrite(data->data, sizeof(char), datalen, *fd);
+	int dataLen = strlen(data->data);
+	if(dataLen < Data_SIZE)
+		fclose(*fd);
+
+	uint16_t num = ntohs(data->num);
+
+	printf("IN:DATA, %d, %d\n", num, dataLen);
 
 	struct st_ack ack;
 	memset(&ack, 0, sizeof(ack));
@@ -78,8 +90,8 @@ int main(int argc, char *argv[]) {
 		error("wrong number of parameters");
 	unsigned short echoServPort = atoi(argv[1]);
 
-	int sock_fd, data_fd;
-	/* Socket */
+	int sock_fd;
+	FILE* data_fd;
 	struct sockaddr_in serverSocketAddr; /* Local address */
 	struct sockaddr_in clientSocketAddr; /* Client address */
 	unsigned int clientAddrLen; /* Length of incoming message */
@@ -91,9 +103,13 @@ int main(int argc, char *argv[]) {
     struct timeval timeInt;
     timeInt.tv_sec = TIMEOUT;
     timeInt.tv_usec = 0;
-    struct st_ack wrq;
+
+    struct st_wrq wrq;
     struct st_data data;
     struct st_ack ack;
+    memset(&wrq, 0, sizeof(wrq));
+    memset(&data, 0, sizeof(data));
+    memset(&ack, 0, sizeof(ack));
 
 	/* Create socket for sending/receiving datagrams */
 	if ((sock_fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
@@ -117,16 +133,15 @@ int main(int argc, char *argv[]) {
 		recvMsgSize = recvfrom(sock_fd, &wrq, PACK_SIZE, 0, (struct sockaddr *) &clientSocketAddr, &clientAddrLen);
 		if (recvMsgSize < 0)
 			error("socket recvfrom failed");
-		printf("Handling client %s\n", inet_ntoa(clientSocketAddr.sin_addr));
 
-        ack = proccess_wrq(wrq, &data_fd);
+        ack = proccess_wrq(&wrq, &data_fd);
 
-        if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*)clientSocketAddr,  sizeof(*clientSocketAddr))  != sizeof(clientSocketAddr))
+        if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*) &clientSocketAddr,  clientAddrLen)  != sizeof(clientSocketAddr))
             error("faild to send response");
+        printf("OUT:ACK, %d\n", ack.num);
 
 		int timeoutExpiredCount = 0;
 		int packetReady = 0;
-		string sendData;
 		do
 		{
 			do
@@ -135,17 +150,24 @@ int main(int argc, char *argv[]) {
 				{
 					// TODO: Wait WAIT_FOR_PACKET_TIMEOUT to see if something appears                  
 					//       for us at the socket (we are waiting for DATA)
-					packetReady = select(sock_fd+1, &fdSet, NULL, NULL, timeInt);
+					packetReady = select(sock_fd+1, &fdSet, NULL, NULL, &timeInt);
 
 					if (packetReady > 0)// TODO: if there was something at the socket and we are here not because of a timeout
 					              
 					{
 						// TODO: Read the DATA packet from the socket (at least we hope this is a DATA packet)
 						recvMsgSize = recvfrom(sock_fd, &data, PACK_SIZE, 0, (struct sockaddr *) &clientSocketAddr, &clientAddrLen);
+						if (recvMsgSize < 0)
+							error("socket recvfrom failed");
+						ack = proccess_data(&data, recvMsgSize, &data_fd);
+
 					}
 					if   (packetReady == 0) // TODO: Time out expired while waiting for data to appear at the socket
 				   	{  
-				   		//TODO: Send another ACK for the last packet   
+				   		//TODO: Send another ACK for the last packet  
+				   		if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*) &clientSocketAddr,  clientAddrLen)  != sizeof(clientSocketAddr))
+				            error("faild to send response");
+				        printf("OUT:ACK, %d\n", ack.num); 
 				   		timeoutExpiredCount++;  
 				   	}
 				   	if   (packetReady < 0)
@@ -156,17 +178,16 @@ int main(int argc, char *argv[]) {
 				   	{                 
 				   		error("Timeout while waiting for packet");
 				   	} 
-				} while(recvMsgSize < 0) // TODO: Continue while some socket was ready  
+				} while(recvMsgSize < 0); // TODO: Continue while some socket was ready  
 						     //       but recvfrom somehow failed to read the data
 			} while(false);
 			timeoutExpiredCount = 0;
 
-			ack = proccess_data(data);
-            if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*)clientSocketAddr,  sizeof(*clientSocketAddr))  != sizeof(clientSocketAddr))
-                error("faild to send response");
-
-
 			// TODO: send ACK packet to the client
+	        if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*) &clientSocketAddr,  clientAddrLen)  != sizeof(clientSocketAddr))
+	            error("faild to send response");
+	        printf("OUT:ACK, %d\n", ack.num);
+
 		} while(recvMsgSize >= PACK_SIZE); // Have blocks left to be read from client (not end of transmission)
 	}
 	/* NOT REACHED */
