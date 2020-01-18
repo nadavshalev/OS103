@@ -15,11 +15,12 @@
 
 using namespace std;
 
-bool state;
+int nextNum = 0;
 
 uint16_t WRQ_OP = 2;
 uint16_t DATA_OP = 3;
 uint16_t ACK_OP = 4;
+const char* MODE = "octet";
 
 struct st_ack
 {
@@ -45,49 +46,83 @@ void error(const char *msg) {
 }
 
 struct st_ack proccess_wrq(struct st_wrq* wrq, FILE** fd){
+	// check opcode
 	if(ntohs(wrq->op) != WRQ_OP)
-		error("Error: Wrong opcode for wrq packet");
-	// TODO: split filename and mode!
+		error("FLOWERROR: Wrong opcode for wrq packet");
+
+	//split filename and mode!
 	char* ptr = wrq->data;
 	char filename[255];
 	char mode[255];
 	strncpy(filename, ptr, 255);
 	ptr += strlen(ptr)+1;
 	strncpy(mode, ptr, 255); 
+
+	// open file for writing
 	*fd = fopen(filename,"w");
 
 	printf("IN:WRQ,%s,%s\n", filename, mode);
-	
+
+	// check filename and mode
+	if(strlen(filename) == 0){
+		printf("FLOWERROR: file name is not correct");
+		exit(1);
+	}
+	if(strcmp(mode,MODE)){
+		printf("FLOWERROR: file type not supported");
+		exit(1);
+	}
+
+	// make ack message
 	struct st_ack ack;
 	memset(&ack, 0, sizeof(ack));
 	ack.op = htons(ACK_OP);
 	ack.num = htons(0);
+
+	nextNum += 1;
 	return ack;
 }
 struct st_ack proccess_data(struct st_data* data, int datalen, FILE** fd){
-	if(ntohs(data->op) != DATA_OP)
-		error("Error: Wrong opcode for data packet");
+	// check opcode
+	if(ntohs(data->op) != DATA_OP){
+		printf("FLOWERROR: Wrong opcode for data packet");
+		exit(1);
+	}
 
-	fwrite(data->data, sizeof(char), datalen, *fd);
-	int dataLen = strlen(data->data);
-	if(dataLen < Data_SIZE)
-		fclose(*fd);
-
+	// check packete num
 	uint16_t num = ntohs(data->num);
+	if(num != nextNum){
+		printf("FLOWERROR: wrong packet num");
+		exit(1);
+	}
+
+	// write data to file
+	int dataLen = strlen(data->data);
+	printf("WRITING: %d\n", dataLen);
+	fwrite(data->data, sizeof(char), datalen, *fd);
+
+	// check if end of file
+	if(dataLen < Data_SIZE){
+		printf("RECVOK\n");
+		fclose(*fd);
+	}
 
 	printf("IN:DATA, %d, %d\n", num, dataLen);
 
+	// make ack message
 	struct st_ack ack;
 	memset(&ack, 0, sizeof(ack));
 	ack.op = htons(ACK_OP);
 	ack.num = htons(num);
+
+	nextNum += 1;
 	return ack;
 }
 
 
 int main(int argc, char *argv[]) {
 	if(argc != 2)
-		error("wrong number of parameters");
+		error("TTFTP_ERROR: wrong number of parameters");
 	unsigned short echoServPort = atoi(argv[1]);
 
 	int sock_fd;
@@ -111,7 +146,7 @@ int main(int argc, char *argv[]) {
 
 	/* Create socket for sending/receiving datagrams */
 	if ((sock_fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
-		error("socket creation failed");
+		error("TTFTP_ERROR: socket creation failed");
     FD_SET(sock_fd, &fdSet);
 
 	/* Construct local address structure */
@@ -122,7 +157,7 @@ int main(int argc, char *argv[]) {
 
 	/* Bind to the local address */
 	if (bind(sock_fd, (struct sockaddr *) &serverSocketAddr, sizeof(serverSocketAddr)) < 0)
-		error("socket bind failed");
+		error("TTFTP_ERROR: socket bind failed");
 
 	while(true) {
 		/* Set the size of the in-out parameter */
@@ -131,11 +166,11 @@ int main(int argc, char *argv[]) {
 		/* Block until receive message from a client */
 		recvMsgSize = recvfrom(sock_fd, &wrq, PACK_SIZE, 0, (struct sockaddr *) &clientSocketAddr, &clientAddrLen);
 		if (recvMsgSize < 0)
-			error("socket recvfrom failed");
+			error("TTFTP_ERROR: socket recvfrom failed");
         ack = proccess_wrq(&wrq, &data_fd);
 
         if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*) &clientSocketAddr,  clientAddrLen)  != sizeof(ack))
-            error("faild to send response");
+            error("TTFTP_ERROR: faild to send response");
         printf("OUT:ACK, %d\n", ack.num);
 
 		int timeoutExpiredCount = 0;
@@ -157,25 +192,27 @@ int main(int argc, char *argv[]) {
 						// TODO: Read the DATA packet from the socket (at least we hope this is a DATA packet)
 						recvMsgSize = recvfrom(sock_fd, &data, PACK_SIZE, 0, (struct sockaddr *) &clientSocketAddr, &clientAddrLen);
 						if (recvMsgSize < 0)
-							error("socket recvfrom failed");
+							error("TTFTP_ERROR: socket recvfrom failed");
 						ack = proccess_data(&data, recvMsgSize, &data_fd);
 
 					}
 					if   (packetReady == 0) // TODO: Time out expired while waiting for data to appear at the socket
 				   	{  
+				   		printf("FLOWERROR: timeout while waiting for packet");
 				   		//TODO: Send another ACK for the last packet  
 				   		if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*) &clientSocketAddr,  clientAddrLen)  != sizeof(ack))
-				            error("faild to send response");
+				            error("TTFTP_ERROR: faild to send response");
 				        printf("OUT:ACK, %d\n", ack.num); 
 				   		timeoutExpiredCount++;  
 				   	}
 				   	if   (packetReady < 0)
 				   	{
-				   	    error("Error while waiting for packet");
+				   	    error("TTFTP_ERROR: error while waiting for packet");
 				   	}
 				   	if   (timeoutExpiredCount>= MAX_FAIL)  
 				   	{                 
-				   		error("Timeout while waiting for packet");
+				   		printf("FLOWERROR: failed %d times\n", MAX_FAIL);
+				   		exit(1);
 				   	} 
 				} while(recvMsgSize <= 0); // TODO: Continue while some socket was ready  
 						     //       but recvfrom somehow failed to read the data
@@ -184,7 +221,7 @@ int main(int argc, char *argv[]) {
 
 			// TODO: send ACK packet to the client
 	        if (sendto(sock_fd, &ack, sizeof(ack), 0, (struct sockaddr*) &clientSocketAddr,  clientAddrLen)  != sizeof(ack))
-	            error("faild to send response");
+	            error("TTFTP_ERROR: faild to send response");
 	        printf("OUT:ACK, %d\n", ack.num);
 
 		} while(recvMsgSize >= PACK_SIZE); // Have blocks left to be read from client (not end of transmission)
