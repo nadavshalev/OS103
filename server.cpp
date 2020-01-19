@@ -151,29 +151,31 @@ int main(int argc, char *argv[]) {
     struct st_wrq wrq;
     struct st_data data;
     struct st_ack ack;
-    memset(&wrq, 0, sizeof(wrq));
-    memset(&data, 0, sizeof(data));
-    memset(&ack, 0, sizeof(ack));
-
-	/* Create socket for sending/receiving datagrams */
-	if ((sock_fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
-		error("TTFTP_ERROR: socket creation failed");
-    FD_SET(sock_fd, &fdSet);
-
-	/* Construct local address structure */
-	memset(&serverSocketAddr, 0, sizeof(serverSocketAddr)); /* Zero out structure */
-	serverSocketAddr.sin_family = AF_INET; /* Internet address family */
-	serverSocketAddr.sin_addr.s_addr = htonl(INADDR_ANY); /* Any incoming interface */
-	serverSocketAddr.sin_port = htons(echoServPort); /* Local port */
-
-	/* Bind to the local address */
-	if (bind(sock_fd, (struct sockaddr *) &serverSocketAddr, sizeof(serverSocketAddr)) < 0)
-		error("TTFTP_ERROR: socket bind failed");
 
 
 	while(true) {
+	    memset(&wrq, 0, sizeof(wrq));
+	    memset(&data, 0, sizeof(data));
+	    memset(&ack, 0, sizeof(ack));
+
+		/* Create socket for sending/receiving datagrams */
+		if ((sock_fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
+			error("TTFTP_ERROR: socket creation failed");
+	    FD_SET(sock_fd, &fdSet);
+
+		/* Construct local address structure */
+		memset(&serverSocketAddr, 0, sizeof(serverSocketAddr)); /* Zero out structure */
+		serverSocketAddr.sin_family = AF_INET; /* Internet address family */
+		serverSocketAddr.sin_addr.s_addr = htonl(INADDR_ANY); /* Any incoming interface */
+		serverSocketAddr.sin_port = htons(echoServPort); /* Local port */
+
+		/* Bind to the local address */
+		if (bind(sock_fd, (struct sockaddr *) &serverSocketAddr, sizeof(serverSocketAddr)) < 0)
+			error("TTFTP_ERROR: socket bind failed");
+
 		bool keepFlow = true;
 		bool isFinish = false;
+		nextNum = 0;
 		/* Set the size of the in-out parameter */
 		clientAddrLen = sizeof(clientSocketAddr);
 
@@ -245,8 +247,8 @@ int main(int argc, char *argv[]) {
 		    	printf("RECVOK\n");
 
 		} while(recvMsgSize >= PACK_SIZE && keepFlow); // Have blocks left to be read from client (not end of transmission)
-
-		nextNum = 0;
+		printf("%s\n", "wait again!!!");
+		close(sock_fd);
 	}
 	/* NOT REACHED */
 }	
