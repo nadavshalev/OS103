@@ -245,6 +245,8 @@ int main(int argc, char *argv[]) {
 		    	printf("RECVOK\n");
 
 		} while(recvMsgSize >= PACK_SIZE && keepFlow); // Have blocks left to be read from client (not end of transmission)
+
+		nextNum = 0;
 	}
 	/* NOT REACHED */
 }	
